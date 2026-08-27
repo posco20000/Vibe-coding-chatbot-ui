@@ -8,7 +8,8 @@ Supabase Google 인증과 Gemini를 연결한 Next.js 챗봇입니다. 로그인
 - Supabase SSR 기반 Google 로그인·사용자 정보 표시·로그아웃
 - 비로그인 사용자의 `/chat` 및 `/api/chat` 접근 차단
 - 여러 채팅방 생성·불러오기·삭제
-- 사용자별 브라우저 저장소에 채팅방과 메시지를 자동 저장
+- Supabase Database에 사용자별 채팅방과 메시지를 자동 저장
+- RLS(Row Level Security)로 본인의 채팅 내역만 조회·변경·삭제
 - Gemini 대화 이력을 유지하는 `/api/chat` 서버 Route
 - 무료 티어를 지원하는 `gemini-3.5-flash-lite` 연동
 - API 키가 없을 때 고정된 설정 안내 표시
@@ -50,6 +51,8 @@ Supabase Dashboard > Authentication > URL Configuration에는 다음 주소를 �
 - 운영 Redirect URL: `https://your-domain.com/auth/callback`
 - Vercel Preview가 필요하면 팀 이름을 포함한 Preview wildcard도 별도로 등록
 
+채팅 저장용 테이블, 인덱스, RLS 정책은 `supabase/migrations`에 기록되어 있습니다. 새 Supabase 프로젝트에 연결할 때는 Supabase CLI로 마이그레이션을 적용합니다.
+
 ## Gemini API 키 설정
 
 Google AI Studio에서 새 API 키를 발급한 뒤 `.env` 또는 `.env.local`에 입력합니다. 개인 키는 로컬 개발에서 우선순위가 높은 `.env.local` 사용을 권장합니다.
@@ -84,8 +87,9 @@ npm run build
 src/app/page.tsx                  # 공개 랜딩 및 로그인 진입점
 src/app/chat/page.tsx             # 인증이 필요한 채팅 페이지
 src/app/auth/callback/route.ts    # Supabase PKCE 로그인 콜백
-src/components/chat-app.tsx       # 채팅 UI와 사용자별 로컬 저장
+src/components/chat-app.tsx       # 채팅 UI와 Supabase 저장·삭제
 src/lib/supabase/                 # 브라우저·서버·Proxy Supabase 클라이언트
+supabase/migrations/              # 채팅 스키마·인덱스·RLS 마이그레이션
 src/proxy.ts                      # Supabase 세션 쿠키 갱신
 src/app/api/chat/route.ts         # 인증 검사 후 Gemini API 호출
 .env.example                      # 필요한 환경 변수 예시

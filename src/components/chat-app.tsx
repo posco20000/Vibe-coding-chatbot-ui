@@ -1,24 +1,19 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { FormEvent, KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import LogoutButton from "@/components/logout-button";
+import type { ChatMessage, ChatRoom } from "@/lib/chat-history";
+import { createClient } from "@/lib/supabase/client";
 
-type ChatMessage = {
-  id: string;
-  role: "user" | "assistant" | "notice";
-  content: string;
-};
-
-type ChatRoom = {
-  id: string;
-  title: string;
-  messages: ChatMessage[];
-  updatedAt: number;
-};
-
-const CHAT_STORAGE_KEY_PREFIX = "seocho-ai-chat-rooms-v1";
 const FALLBACK_NOTICE = "요청에 실패했습니다.";
 
 type ChatAppProps = {
@@ -27,52 +22,9 @@ type ChatAppProps = {
     name: string;
     email: string;
   };
+  initialRooms: ChatRoom[];
+  initialLoadError?: string;
 };
-
-function isChatMessage(value: unknown): value is ChatMessage {
-  if (typeof value !== "object" || value === null) return false;
-  const message = value as Partial<ChatMessage>;
-
-  return (
-    typeof message.id === "string" &&
-    (message.role === "user" ||
-      message.role === "assistant" ||
-      message.role === "notice") &&
-    typeof message.content === "string"
-  );
-}
-
-function restoreChatRooms(value: unknown): ChatRoom[] {
-  if (!Array.isArray(value)) return [];
-
-  return value
-    .flatMap((candidate) => {
-      if (typeof candidate !== "object" || candidate === null) return [];
-      const room = candidate as Partial<ChatRoom>;
-
-      if (
-        typeof room.id !== "string" ||
-        typeof room.title !== "string" ||
-        !Array.isArray(room.messages)
-      ) {
-        return [];
-      }
-
-      const messages = room.messages.filter(isChatMessage);
-      if (messages.length === 0) return [];
-
-      return [
-        {
-          id: room.id,
-          title: room.title,
-          messages,
-          updatedAt:
-            typeof room.updatedAt === "number" ? room.updatedAt : Date.now(),
-        },
-      ];
-    })
-    .sort((first, second) => second.updatedAt - first.updatedAt);
-}
 
 function MenuIcon() {
   return (
@@ -114,57 +66,26 @@ function TrashIcon() {
   );
 }
 
-export default function ChatApp({ user }: ChatAppProps) {
+export default function ChatApp({
+  user,
+  initialRooms,
+  initialLoadError,
+}: ChatAppProps) {
   const router = useRouter();
-  const [rooms, setRooms] = useState<ChatRoom[]>([]);
-  const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
+  const supabase = useMemo(() => createClient(), []);
+  const [rooms, setRooms] = useState<ChatRoom[]>(initialRooms);
+  const [activeRoomId, setActiveRoomId] = useState<string | null>(
+    initialRooms[0]?.id ?? null,
+  );
   const [prompt, setPrompt] = useState("");
   const [isSending, setIsSending] = useState(false);
+  const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [storageReady, setStorageReady] = useState(false);
+  const [syncError, setSyncError] = useState(initialLoadError ?? "");
   const endRef = useRef<HTMLDivElement>(null);
-  const storageKey = `${CHAT_STORAGE_KEY_PREFIX}:${user.id}`;
 
   const activeRoom = rooms.find((room) => room.id === activeRoomId);
   const messages = activeRoom?.messages ?? [];
-
-  useEffect(() => {
-    const restoreStorage = window.setTimeout(() => {
-      try {
-        const stored = localStorage.getItem(storageKey);
-        if (!stored) return;
-
-        const saved = JSON.parse(stored) as {
-          rooms?: unknown;
-          activeRoomId?: unknown;
-        };
-        const restoredRooms = restoreChatRooms(saved.rooms);
-
-        setRooms(restoredRooms);
-        setActiveRoomId(
-          typeof saved.activeRoomId === "string" &&
-            restoredRooms.some((room) => room.id === saved.activeRoomId)
-            ? saved.activeRoomId
-            : null,
-        );
-      } catch {
-        setRooms([]);
-        setActiveRoomId(null);
-      } finally {
-        setStorageReady(true);
-      }
-    }, 0);
-
-    return () => window.clearTimeout(restoreStorage);
-  }, [storageKey]);
-
-  useEffect(() => {
-    if (!storageReady) return;
-    localStorage.setItem(
-      storageKey,
-      JSON.stringify({ rooms, activeRoomId }),
-    );
-  }, [activeRoomId, rooms, storageKey, storageReady]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -180,7 +101,7 @@ export default function ChatApp({ user }: ChatAppProps) {
       const updatedRoom = {
         ...room,
         messages: [...room.messages, message],
-        updatedAt: Date.now(),
+        updatedAt: message.createdAt,
       };
 
       return [updatedRoom, ...current.filter((item) => item.id !== roomId)];
@@ -191,22 +112,59 @@ export default function ChatApp({ user }: ChatAppProps) {
     setActiveRoomId(null);
     setPrompt("");
     setSidebarOpen(false);
+    setSyncError("");
   }
 
   function openRoom(roomId: string) {
     setActiveRoomId(roomId);
     setPrompt("");
     setSidebarOpen(false);
+    setSyncError("");
   }
 
-  function deleteRoom(roomId: string) {
-    const remainingRooms = rooms.filter((room) => room.id !== roomId);
+  async function deleteRoom(roomId: string) {
+    const room = rooms.find((item) => item.id === roomId);
+    if (!room || isSending || deletingRoomId) return;
+
+    if (!window.confirm("이 대화와 저장된 메시지를 삭제할까요?")) return;
+
+    setDeletingRoomId(roomId);
+    setSyncError("");
+
+    const { error } = await supabase
+      .from("chat_rooms")
+      .delete()
+      .eq("id", roomId)
+      .eq("user_id", user.id);
+
+    if (error) {
+      setSyncError("대화를 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      setDeletingRoomId(null);
+      return;
+    }
+
+    const remainingRooms = rooms.filter((item) => item.id !== roomId);
     setRooms(remainingRooms);
 
     if (activeRoomId === roomId) {
       setActiveRoomId(remainingRooms[0]?.id ?? null);
       setPrompt("");
     }
+
+    setDeletingRoomId(null);
+  }
+
+  async function persistMessage(roomId: string, message: ChatMessage) {
+    const { error } = await supabase.from("chat_messages").insert({
+      id: message.id,
+      user_id: user.id,
+      room_id: roomId,
+      role: message.role,
+      content: message.content,
+      created_at: message.createdAt,
+    });
+
+    if (error) throw new Error("CHAT_MESSAGE_SAVE_FAILED");
   }
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -215,30 +173,66 @@ export default function ChatApp({ user }: ChatAppProps) {
 
     if (!message || isSending) return;
 
+    const isNewRoom = activeRoomId === null;
     const roomId = activeRoomId ?? crypto.randomUUID();
+    const createdAt = new Date().toISOString();
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: message,
+      createdAt,
     };
+    const title = Array.from(message).slice(0, 60).join("");
 
-    if (activeRoomId) {
-      appendMessageToRoom(roomId, userMessage);
-    } else {
+    setPrompt("");
+    setIsSending(true);
+    setSyncError("");
+
+    try {
+      if (isNewRoom) {
+        const { error } = await supabase.from("chat_rooms").insert({
+          id: roomId,
+          user_id: user.id,
+          title,
+          created_at: createdAt,
+          updated_at: createdAt,
+        });
+
+        if (error) throw new Error("CHAT_ROOM_SAVE_FAILED");
+      }
+
+      await persistMessage(roomId, userMessage);
+    } catch {
+      if (isNewRoom) {
+        await supabase
+          .from("chat_rooms")
+          .delete()
+          .eq("id", roomId)
+          .eq("user_id", user.id);
+      }
+
+      setPrompt(message);
+      setSyncError("메시지를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      setIsSending(false);
+      return;
+    }
+
+    if (isNewRoom) {
       setRooms((current) => [
         {
           id: roomId,
-          title: message.slice(0, 60),
+          title,
           messages: [userMessage],
-          updatedAt: Date.now(),
+          updatedAt: createdAt,
         },
         ...current,
       ]);
       setActiveRoomId(roomId);
+    } else {
+      appendMessageToRoom(roomId, userMessage);
     }
 
-    setPrompt("");
-    setIsSending(true);
+    let responseMessage: ChatMessage;
 
     try {
       const response = await fetch("/api/chat", {
@@ -262,17 +256,29 @@ export default function ChatApp({ user }: ChatAppProps) {
         return;
       }
 
-      appendMessageToRoom(roomId, {
+      responseMessage = {
         id: crypto.randomUUID(),
         role: data.code ? "notice" : "assistant",
         content: data.message ?? FALLBACK_NOTICE,
-      });
+        createdAt: new Date().toISOString(),
+      };
     } catch {
-      appendMessageToRoom(roomId, {
+      responseMessage = {
         id: crypto.randomUUID(),
         role: "notice",
         content: FALLBACK_NOTICE,
-      });
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    appendMessageToRoom(roomId, responseMessage);
+
+    try {
+      await persistMessage(roomId, responseMessage);
+    } catch {
+      setSyncError(
+        "답변은 표시했지만 저장하지 못했습니다. 페이지를 새로고침하면 사라질 수 있습니다.",
+      );
     } finally {
       setIsSending(false);
     }
@@ -312,14 +318,19 @@ export default function ChatApp({ user }: ChatAppProps) {
           </div>
         </div>
 
-        <button className="new-chat-button" type="button" onClick={startNewChat}>
+        <button
+          className="new-chat-button"
+          type="button"
+          onClick={startNewChat}
+          disabled={isSending}
+        >
           <PlusIcon />
           새 대화
         </button>
 
         {rooms.length > 0 ? (
           <nav className="conversation-nav" aria-label="대화 목록">
-            <span className="section-label">대화</span>
+            <span className="section-label">저장된 대화</span>
             {rooms.map((room) => (
               <div
                 className={`conversation-item ${
@@ -332,6 +343,7 @@ export default function ChatApp({ user }: ChatAppProps) {
                   type="button"
                   aria-current={room.id === activeRoomId ? "page" : undefined}
                   onClick={() => openRoom(room.id)}
+                  disabled={isSending}
                 >
                   <span>{room.title}</span>
                 </button>
@@ -340,6 +352,7 @@ export default function ChatApp({ user }: ChatAppProps) {
                   type="button"
                   aria-label={`${room.title} 삭제`}
                   onClick={() => deleteRoom(room.id)}
+                  disabled={isSending || deletingRoomId !== null}
                 >
                   <TrashIcon />
                 </button>
@@ -381,28 +394,42 @@ export default function ChatApp({ user }: ChatAppProps) {
               <br />
               도와드릴까요?
             </h1>
+            {syncError ? (
+              <p className="chat-sync-status" role="alert">
+                {syncError}
+              </p>
+            ) : null}
           </header>
 
           <div className="conversation" aria-live="polite">
             {messages.length > 0 ? (
               <div className="message-list">
-                {messages.map((message) =>
-                  message.role === "user" ? (
-                    <article className="message user-message" key={message.id}>
+                {messages.map((chatMessage) =>
+                  chatMessage.role === "user" ? (
+                    <article
+                      className="message user-message"
+                      key={chatMessage.id}
+                    >
                       <span className="message-label">나</span>
-                      <p>{message.content}</p>
+                      <p>{chatMessage.content}</p>
                     </article>
-                  ) : message.role === "notice" ? (
-                    <article className="message notice-message" key={message.id}>
+                  ) : chatMessage.role === "notice" ? (
+                    <article
+                      className="message notice-message"
+                      key={chatMessage.id}
+                    >
                       <div className="notice-mark" aria-hidden="true">
                         !
                       </div>
-                      <p>{message.content}</p>
+                      <p>{chatMessage.content}</p>
                     </article>
                   ) : (
-                    <article className="message assistant-message" key={message.id}>
+                    <article
+                      className="message assistant-message"
+                      key={chatMessage.id}
+                    >
                       <span className="message-label">서초 Agent</span>
-                      <p>{message.content}</p>
+                      <p>{chatMessage.content}</p>
                     </article>
                   ),
                 )}

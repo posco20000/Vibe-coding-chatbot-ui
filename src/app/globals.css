@@ -211,6 +211,13 @@ textarea:focus-visible {
   color: var(--ink);
 }
 
+.delete-room-button:disabled,
+.new-chat-button:disabled,
+.conversation-select:disabled {
+  cursor: wait;
+  opacity: 0.45;
+}
+
 .delete-room-button svg {
   width: 15px;
   fill: none;
@@ -494,6 +501,17 @@ textarea:focus-visible {
   font-weight: 650;
   letter-spacing: -0.075em;
   line-height: 1;
+}
+
+.chat-sync-status {
+  max-width: 680px;
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  border-left: 3px solid #b42318;
+  background: #fff4f2;
+  color: #8a1c13;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .conversation {

@@ -1,12 +1,14 @@
 # 서초 AI
 
-Gemini API 키만 등록하면 바로 사용할 수 있는 미니멀한 Next.js 챗봇입니다.
+Supabase Google 인증과 Gemini를 연결한 Next.js 챗봇입니다. 로그인한 사용자만 채팅 화면과 서버 API에 접근할 수 있습니다.
 
 ## 현재 구현된 것
 
 - 데스크톱·모바일 반응형 챗봇 UI
+- Supabase SSR 기반 Google 로그인·사용자 정보 표시·로그아웃
+- 비로그인 사용자의 `/chat` 및 `/api/chat` 접근 차단
 - 여러 채팅방 생성·불러오기·삭제
-- 브라우저에 채팅방과 메시지를 자동 저장해 새로고침 후에도 복원
+- 사용자별 브라우저 저장소에 채팅방과 메시지를 자동 저장
 - Gemini 대화 이력을 유지하는 `/api/chat` 서버 Route
 - 무료 티어를 지원하는 `gemini-3.5-flash-lite` 연동
 - API 키가 없을 때 고정된 설정 안내 표시
@@ -14,7 +16,7 @@ Gemini API 키만 등록하면 바로 사용할 수 있는 미니멀한 Next.js 
 
 ## 로컬 실행
 
-Node.js 20.9 이상이 필요합니다.
+Node.js 22 이상이 필요합니다.
 
 ```bash
 npm install
@@ -23,6 +25,30 @@ npm run dev
 ```
 
 브라우저에서 [http://localhost:3000](http://localhost:3000)을 엽니다.
+
+## Supabase와 Google 로그인 설정
+
+`.env.local`에 Supabase Project Settings > API의 Project URL과 Publishable key를 입력합니다. `service_role` 또는 secret 키는 브라우저에 공개되는 `NEXT_PUBLIC_` 변수에 절대 넣지 않습니다.
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_your-key
+```
+
+Google Cloud Console에서 OAuth 2.0 웹 클라이언트를 만든 뒤, 승인된 리디렉션 URI에 다음 Supabase 콜백 주소를 등록합니다.
+
+```text
+https://your-project-ref.supabase.co/auth/v1/callback
+```
+
+Supabase Dashboard > Authentication > Sign In / Providers > Google에서 Google Client ID와 Client Secret을 입력하고 Google Provider를 활성화합니다. 이 두 값은 코드나 `.env.local`에 넣지 않습니다.
+
+Supabase Dashboard > Authentication > URL Configuration에는 다음 주소를 등록합니다.
+
+- Site URL: 로컬 개발 중에는 `http://localhost:3000`, 배포 후에는 Vercel 운영 URL
+- Redirect URLs: `http://localhost:3000/auth/callback`
+- 운영 Redirect URL: `https://your-domain.com/auth/callback`
+- Vercel Preview가 필요하면 팀 이름을 포함한 Preview wildcard도 별도로 등록
 
 ## Gemini API 키 설정
 
@@ -46,14 +72,21 @@ npm run build
 
 1. 본인 GitHub 저장소로 코드를 올립니다.
 2. Vercel에서 해당 저장소를 Import합니다.
-3. Vercel 프로젝트의 Environment Variables에 `GEMINI_API_KEY`를 등록합니다.
-4. 배포를 실행합니다.
+3. Vercel 프로젝트의 Environment Variables에 `GEMINI_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`를 등록합니다.
+4. 배포 후 Supabase URL Configuration에 실제 Vercel 운영 URL과 `/auth/callback` 주소를 등록합니다.
+5. 배포를 실행하고 Google 로그인 → `/chat` 이동 → 로그아웃 → `/` 이동을 확인합니다.
+
+`.nvmrc`와 `package.json`은 Vercel에서 Node.js 22 이상을 사용하도록 설정되어 있습니다. Next.js 프로젝트이므로 별도의 `vercel.json`은 필요하지 않습니다.
 
 ## 주요 파일
 
 ```text
-src/app/page.tsx            # 챗봇 화면과 채팅방 저장·관리 상태
-src/app/globals.css         # 흑백 편집형 디자인과 반응형 스타일
-src/app/api/chat/route.ts   # Gemini API 서버 호출
-.env.example                # 필요한 환경 변수 예시
+src/app/page.tsx                  # 공개 랜딩 및 로그인 진입점
+src/app/chat/page.tsx             # 인증이 필요한 채팅 페이지
+src/app/auth/callback/route.ts    # Supabase PKCE 로그인 콜백
+src/components/chat-app.tsx       # 채팅 UI와 사용자별 로컬 저장
+src/lib/supabase/                 # 브라우저·서버·Proxy Supabase 클라이언트
+src/proxy.ts                      # Supabase 세션 쿠키 갱신
+src/app/api/chat/route.ts         # 인증 검사 후 Gemini API 호출
+.env.example                      # 필요한 환경 변수 예시
 ```

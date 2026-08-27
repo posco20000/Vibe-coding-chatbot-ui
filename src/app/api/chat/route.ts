@@ -1,6 +1,8 @@
 import { GoogleGenAI, type Content } from "@google/genai";
 import { NextResponse } from "next/server";
 
+import { createClient } from "@/lib/supabase/server";
+
 const MODEL = "gemini-3.5-flash-lite";
 
 type ChatHistoryItem = {
@@ -35,6 +37,16 @@ function toGeminiHistory(value: unknown): Content[] {
 }
 
 export async function POST(request: Request) {
+  const supabase = await createClient();
+  const { data: claimsData } = await supabase.auth.getClaims();
+
+  if (!claimsData?.claims) {
+    return NextResponse.json(
+      { code: "UNAUTHORIZED", message: "로그인이 필요합니다." },
+      { status: 401 },
+    );
+  }
+
   const body = (await request.json()) as {
     message?: unknown;
     history?: unknown;

@@ -514,6 +514,12 @@ textarea:focus-visible {
   line-height: 1.55;
 }
 
+.chat-sync-status.is-info {
+  border-left-color: #216e4e;
+  background: #eefbf4;
+  color: #145c3e;
+}
+
 .conversation {
   display: flex;
   min-height: 420px;

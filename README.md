@@ -9,6 +9,7 @@ Supabase Google 인증과 Gemini를 연결한 Next.js 챗봇입니다. 로그인
 - 비로그인 사용자의 `/chat` 및 `/api/chat` 접근 차단
 - 여러 채팅방 생성·불러오기·삭제
 - Supabase Database에 사용자별 채팅방과 메시지를 자동 저장
+- 이전 버전의 브라우저 채팅 기록을 로그인 후 Supabase로 자동 이전
 - RLS(Row Level Security)로 본인의 채팅 내역만 조회·변경·삭제
 - Gemini 대화 이력을 유지하는 `/api/chat` 서버 Route
 - 무료 티어를 지원하는 `gemini-3.5-flash-lite` 연동
@@ -52,6 +53,12 @@ Supabase Dashboard > Authentication > URL Configuration에는 다음 주소를 �
 - Vercel Preview가 필요하면 팀 이름을 포함한 Preview wildcard도 별도로 등록
 
 채팅 저장용 테이블, 인덱스, RLS 정책은 `supabase/migrations`에 기록되어 있습니다. 새 Supabase 프로젝트에 연결할 때는 Supabase CLI로 마이그레이션을 적용합니다.
+
+### 기존 브라우저 채팅 이전
+
+로그인 후 현재 도메인의 `seocho-ai-chat-rooms-v1:<사용자 ID>` 로컬 저장소를 자동으로 감지합니다. 발견된 대화는 한 번의 데이터베이스 트랜잭션으로 가져오며, 재시도해도 메시지가 중복되지 않습니다. 데이터베이스 저장이 모두 성공한 뒤에만 브라우저 원본을 삭제하고 새로고침해 저장된 기록을 표시합니다. 실패하면 원본은 그대로 보존됩니다.
+
+브라우저 보안 정책상 서로 다른 도메인은 상대 도메인의 로컬 저장소를 읽을 수 없습니다. 따라서 예전 배포 주소에만 남아 있는 기록은 새 운영 주소에서 자동으로 감지할 수 없습니다.
 
 ## Gemini API 키 설정
 

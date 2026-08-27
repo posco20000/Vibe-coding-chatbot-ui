@@ -12,6 +12,11 @@ import {
 
 import LogoutButton from "@/components/logout-button";
 import type { ChatMessage, ChatRoom } from "@/lib/chat-history";
+import {
+  createLegacyChatImportPayload,
+  getLegacyChatStorageKey,
+  toSupabaseJson,
+} from "@/lib/legacy-chat-migration";
 import { createClient } from "@/lib/supabase/client";
 
 const FALLBACK_NOTICE = "요청에 실패했습니다.";
@@ -82,10 +87,54 @@ export default function ChatApp({
   const [deletingRoomId, setDeletingRoomId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [syncError, setSyncError] = useState(initialLoadError ?? "");
+  const [migrationMessage, setMigrationMessage] = useState("");
+  const migrationAttemptedRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
 
   const activeRoom = rooms.find((room) => room.id === activeRoomId);
   const messages = activeRoom?.messages ?? [];
+
+  useEffect(() => {
+    if (migrationAttemptedRef.current) return;
+    migrationAttemptedRef.current = true;
+
+    const storageKey = getLegacyChatStorageKey(user.id);
+
+    async function migrateLegacyHistory() {
+      try {
+        const storedHistory = localStorage.getItem(storageKey);
+
+        if (!storedHistory) return;
+
+        const legacyRooms = createLegacyChatImportPayload(storedHistory);
+
+        if (legacyRooms.length === 0) {
+          localStorage.removeItem(storageKey);
+          return;
+        }
+
+        setMigrationMessage("기존 브라우저 대화를 안전하게 이전하고 있습니다…");
+
+        const { error } = await supabase.rpc("import_legacy_chat_history", {
+          p_rooms: toSupabaseJson(legacyRooms),
+        });
+
+        if (error) throw error;
+
+        localStorage.removeItem(storageKey);
+
+        setMigrationMessage("기존 대화 이전이 완료되었습니다.");
+        window.location.reload();
+      } catch {
+        setMigrationMessage("");
+        setSyncError(
+          "기존 브라우저 대화를 DB로 이전하지 못했습니다. 원본은 브라우저에 그대로 보관되어 있습니다.",
+        );
+      }
+    }
+
+    void migrateLegacyHistory();
+  }, [supabase, user.id]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -397,6 +446,11 @@ export default function ChatApp({
             {syncError ? (
               <p className="chat-sync-status" role="alert">
                 {syncError}
+              </p>
+            ) : null}
+            {migrationMessage ? (
+              <p className="chat-sync-status is-info" role="status">
+                {migrationMessage}
               </p>
             ) : null}
           </header>
